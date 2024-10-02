@@ -357,7 +357,8 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     }
 
     protected static function getProvidersJsonConfigAsArray() {
-
+        if (is_null(self::$_data) || is_null(self::$_data['providers_config']))
+            return false;
         $configArray = json_decode(self::$_data['providers_config'], true);
         if(empty($configArray)) return false;
         $fullarray = array();
