@@ -1,0 +1,6 @@
+{
+    "require": {
+        "thenetworg/oauth2-azure": "^2.2",
+        "league/oauth2-google": "^4.0"
+    }
+}

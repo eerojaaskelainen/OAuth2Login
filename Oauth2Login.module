@@ -1,5 +1,5 @@
 <?php namespace ProcessWire;
-
+require __DIR__ . '/vendor/autoload.php';
 
 class Oauth2Login extends WireData implements Module, ConfigurableModule {
 
@@ -65,7 +65,6 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     }
 
     public function init() {
-
         self::$_data = $this;
         //$this->config->styles->add($this->config->urls->Oauth2Login . 'Oauth2Login.css');
         //$this->config->scripts->add($this->config->urls->Oauth2Login . 'Oauth2Login.js');
