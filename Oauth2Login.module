@@ -154,9 +154,12 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
                 $emails = $ownerDetails->getEmails();
             }
             
+            $user = $this->checkUsername($username, $emails);
+            if ($user == null)
+                $user = $this->registerNewUser($ownerDetails,$username,$emails);
 
-            if($this->checkUsername($username, $emails)) {
-                $loginUser = $session->forceLogin($username);
+            if($user != null) {
+                $loginUser = $session->forceLogin($user);
                 if ($loginUser && $loginUser->id) {
                     $this->wire->log("Used {$providerName} to login for user: $loginUser->name");
                     $session->set('forceLogin', true);
@@ -253,10 +256,13 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         return $out;
     }
 
-    /*
-     * return true if the user exist.
+    /**
+     * Checks username and emails
+     * @param string $username Assumed username
+     * @param array $emails User emails to compare
+     * @return \ProcessWire\User|null User if found, null if not
      */
-    protected function checkUsername($username, array $emails) {
+    protected function checkUsername($username, array $emails):\ProcessWire\User {
         // disable DoS
         if(count($emails) > 10) return false;
 
@@ -265,13 +271,61 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         foreach ($emails as $email) {
             $email = wire('sanitizer')->email($email);
             $q = "email=$email, name=$username";
-            if(wire('users')->get("{$q}")->id) {
+            $user = wire('users')->get("{$q}");
+            if($user->id) {
                 //bd("logged with user: $username, email: $email");
-                return true;
+                return $user;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    protected function registerNewUser($ownerDetails,string $username, array $emails):?\ProcessWire\User
+    {
+        $providerName = $this->getProviderName();
+        if (empty($providerName))
+            throw new \ProcessWire\WireException('Could not get a provider name!');
+
+        $provider = str_replace('provider_','',$providerName);
+        
+
+        $config = self::getProviderConfig(str_replace('provider_','',$providerName));
+        if ($config == null)
+            throw new \ProcessWire\WireException(sprintf('Could not get config for provider %s',$providerName));
+
+        if (empty($config[$provider.'_registerifnotfound']))
+            return null;
+        $roleId = $config[$provider.'_registerrole'];
+        if (empty($roleId))
+            throw new \ProcessWire\WireException(sprintf($this->_('No registration default role defined for provider %s. Ensure that valid role is set in configuration.'), lcfirst($provider)));
+        $role = $this->roles->get(intval($roleId));
+        if (! $role->id)
+            throw new \ProcessWire\WireException(sprintf($this->_('There is no role registered with ID %s. Ensure that valid role is set in profile %s configuration.'), $roleId, lcfirst($provider)));
+
+        // Role found. Generate!
+        // Get first valid email:
+        $email = null;
+        foreach ($emails as $e)
+        {
+            $email = $this->sanitizer->email($e);
+        }
+        if (empty($email)){
+            $this->warning($this->_('Your login did not produce any valid email address! So cannot register.'));
+            return null;
+        }
+        //TODO: Some claims validation maybe?
+        $user = $this->users->add($username);
+        $user->of(false);
+        $user->addRole($role);
+        $user->email = $email;
+        //$user->setLanguage($lang);
+        $user->save();
+        $user->of(true);
+
+        $this->message($this->_('Your account successfully added!'));
+        $this->log(sprintf('User %s registered via %s provider.',$user->email, $provider),['name'=>'Audits','user'=>$user]);
+        return $user;
     }
 
     protected function getProviderName() {
@@ -489,8 +543,26 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
                     $fs_set->append($field);
                 }
             }
-
             $fs->append($fs_set);
+
+            $f = $modules->get('InputfieldCheckbox');
+            $f->label = __('Register user if not found?');
+            $f->description = __('If enabled, site will register not found users. Use this with caution because you may allow undefined users to administer your site!');
+            $f->attr('name+id',strtolower($conf['className'] .'_registerIfNotFound'));
+            $fs_set->append($f);
+
+            $f = $modules->get('InputfieldSelect');
+            $f->label = __('Role to register user on');
+            $f->showIf = sprintf('%s=1',strtolower($conf['className'] .'_registerIfNotFound'));
+            $f->required = true;//If = sprintf('%s=1',strtolower($conf['className'] .'_registerIfNotFound'));
+            $f->attr('name+id',strtolower($conf['className'] .'_registerRole'));
+            foreach (wire('roles') as $role)
+            {
+                $f->addOption($role->id,$role->name);
+            }
+            $fs_set->append($f);
+
+
             $disabled = true;
             $skip = false;
         }
