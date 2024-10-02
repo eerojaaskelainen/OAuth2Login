@@ -28,6 +28,7 @@ ie: to install Google, open a terminal, go to your root directory of pw and type
 
 More third-party providers are available [there](http://oauth2-client.thephpleague.com/providers/thirdparty/) and can be implemented on demand basis.
 
+You may also include well-known third party providers from [Composer](https://packagist.org/?query=League%20oauth2). In this case, you need to set parameter **providerClassName** in JSON configuration in case it's naming differs from "\League\OAuth2\Client\Provider\PROVIDER" format.
 
 ## Howto Use It
 
@@ -73,6 +74,12 @@ Check this sample :
       "className": "LinkedIn",
       "packageName": "league/oauth2-linkedin",
       "helpUrl": "https://www.linkedin.com/secure/developer"
+    },
+    "azure": {
+      "providerClassName":"\\TheNetworg\\OAuth2\\Client\\Provider\\Azure",
+      "className": "Microsoft",
+      "packageName": "thenetworg/oauth2-azure",
+      "helpUrl": "https://www.microsoft.com/en-us/security/business/identity-access/microsoft-entra-id"
     }
   }
 }

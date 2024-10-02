@@ -9,6 +9,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     public static $_data;
     protected static $configFile;
     protected static $validConfigKeys = array(
+        'providerClassName',
         'className',
         'packageName',
         'keysUrl',
@@ -231,7 +232,8 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             if(strstr($key, 'provider_') && $val === 1) {
                 $provider = str_replace('provider_', '', $key);
                 $provider = ucfirst($provider);
-                if(class_exists('\League\OAuth2\Client\Provider\\' . $provider)) {
+                $config = self::getProviderConfig($provider);
+                if($config != null && self::checkProviderClass(self::getProviderClassName($provider,$config)) ) {
                     $field = $modules->get("InputfieldSubmit");
                     if(strstr($options['buttonValue'], '{provider}')) {
                         $field->value = str_replace('{provider}', $provider, $options['buttonValue']);
@@ -297,7 +299,9 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
 
         $redirectUri = empty(wire('session')->getFor($this, 'redirect_uri')) ? $this->backendUrl : wire('session')->getFor($this, 'redirect_uri');
         $subclass = ucfirst(str_replace('provider_', '', $providerName));
-        $class = '\League\OAuth2\Client\Provider\\' . $subclass;
+        $providerOptions = self::getProviderConfig($subclass);
+        $class = self::getProviderClassName($subclass,$providerOptions);
+        
         $subclass = strtolower($subclass);
         $varClientId = $subclass . '_clientid';
         $varSecret = $subclass . '_secret';
@@ -375,6 +379,21 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         return $fullarray;
     }
 
+    protected static function getProviderConfig(string $className):?array
+    {
+        $configs = self::getProvidersJsonConfigAsArray();
+        if (is_null($configs)) return null;
+
+        $config = array_filter($configs, function($c) use ($className)
+        {
+            return strcasecmp($c['className'],$className) == 0;
+        });
+        if (count($config) >0)
+        {
+            return array_shift($config);
+        }
+        return null;
+    }
     protected static function getProvidersConfig(array $providerConfig) {
 
         $fullarray = array();
@@ -386,6 +405,11 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         return $fullarray;
     }
 
+    protected static function getProviderClassName(string $provider, array $options):string
+    {
+        return isset($options['providerClassName']) ? $options['providerClassName']
+            : '\League\OAuth2\Client\Provider\\' . ucfirst($provider);
+    }
     public static function getModuleConfigInputfields(array $data) {
 
         $data = array_merge(self::getDefaultData(), $data);
@@ -397,7 +421,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
 
         $field = $modules->get("InputfieldTextarea");
         $field->label = __('JSON Providers Config ');
-        $field->description = __("When adding a new provider, required config keys are: **className**, **packageName**, **helpUrl**, **options** (optional)");
+        $field->description = __("When adding a new provider, required config keys are: **providerClassName** (optional), **className**, **packageName**, **helpUrl**, **options** (optional)");
         $field->attr('name+id', 'providers_config');
         $field->attr('value', $data['providers_config']);
         $fields->append($field);
@@ -419,7 +443,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             $conf = self::getProvidersConfig($providerConf);
 
             $field = $modules->get("InputfieldCheckbox");
-            if(!self::checkProviderClass('\League\OAuth2\Client\Provider\\' . ucfirst($provider))) {
+            if(!self::checkProviderClass(self::getProviderClassName($provider,$conf))) {
                 $skip = true;
             }
             $description = ($skip == false) ? $disabled = '' : __("The required package is not installed. Please run the following command to install this provider: **composer require {$conf['packageName']}**");
