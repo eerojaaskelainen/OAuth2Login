@@ -24,7 +24,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     {
         return [
             'title' => 'OAuth2Login',
-            'version' => "1.0.3",
+            'version' => "1.0.4",
             'summary' => 'OAuth2 login for ProcessWire.',
             'author' => 'flydev, Eero Jääskeläinen',
             'href' => 'https://modules.processwire.com/modules/oauth2-login/',
@@ -140,6 +140,10 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             }
 
             if (empty($input->get->code)) {
+                if (strpos($providerName,'_microsoft')!== false){
+                    if ($this->get('microsoft_use_mfa'))
+                        $this->providerParams['amr_values']='ngcmfa';
+                }
                 $authUrl = $this->provider->getAuthorizationUrl($this->providerParams);
                 $session->set('oauth2state', $this->provider->getState());
                 $session->set('provider', $providerName);
@@ -456,6 +460,9 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
                 $params = array_merge($params, array($newOption => $value));
             }
         }
+        // EJ: Append providerOptions['options']
+        if (isset($providerOptions['options']))
+            $params = array_merge($params, $providerOptions['options']);
         $this->providerParams = $params;
         if(!self::checkProviderClass($class)) {
             return false;
@@ -638,6 +645,17 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
                 $field->attr('value', $data_key);
             $field->columnWidth = 50;
             $fs_set->append($field);
+
+            if ($provider == 'microsoft' || $provider =='azure')
+            {
+                $iVal = strtolower($conf['className'].'_use_mfa');
+                $field = $modules->get("InputfieldCheckbox");
+                $field->label = __('Require MFA?');
+                $field->description = __('If company policy requires use of MFA (or login fails with AADSTS50076 error), check this');
+                $field->attr('name+id', $iVal);
+                $field->checked = !empty($data[$iVal]);
+                $fs_set->append($field);
+            }
 
             if(isset($conf['options'])) {
                 foreach ($conf['options'] as $key => $value) {
