@@ -48,8 +48,6 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     
     protected function addAdditionalUserFields():void
     {
-        xdebug_break();
-
         $userTemplate = $this->templates->get('user');
         if ($userTemplate == null){
             $this->warning($this->_('Could not get user template!'));
@@ -61,8 +59,10 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             $field = $this->fields->get('oauth_uid');
             if ($field == null){
                 $field = $this->fields->makeItem(['type'=>'Text','name'=>'oauth_uid','label'=>$this->_('UID (OAuth)')]);
+                $field->save();
             }
             $userTemplate->fields->add($field);
+            $userTemplate->fields->save();
         }
 
     }
@@ -175,7 +175,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         try {
             $ownerDetails = $this->provider->getResourceOwner($token);
             $user = null;
-xdebug_break();
+
             if (method_exists($ownerDetails,'getUpn') && ($upn = $ownerDetails->getUpn()))
             {
                 if ($upnE = $this->sanitizer->email($upn)){
@@ -390,6 +390,8 @@ xdebug_break();
         $user->of(false);
         $user->addRole($role);
         $user->email = $email;
+        if (method_exists($ownerDetails,'getId'))
+            $user->oauth_uid = $ownerDetails->getId();
         //$user->setLanguage($lang);
         $user->save();
         $user->of(true);
@@ -424,11 +426,12 @@ xdebug_break();
         $redirectUri = empty(wire('session')->getFor($this, 'redirect_uri')) ? $this->backendUrl : wire('session')->getFor($this, 'redirect_uri');
         $subclass = ucfirst(str_replace('provider_', '', $providerName));
         $providerOptions = self::getProviderConfig($subclass);
+        if ($providerOptions == null) return false;
         $class = self::getProviderClassName($subclass,$providerOptions);
         $subclass = strtolower($subclass);
         $varClientId = $subclass . '_clientid';
         $varSecret = $subclass . '_secret';
-        $tenantId = $this->data[$subclass .'_tenantid'];
+        $tenantId = isset($this->data[$subclass .'_tenantid']) ? $this->data[$subclass .'_tenantid']: '';
 
         if(!isset($this->data[$varClientId]) || !isset($this->data[$varSecret]))
             return false;
@@ -513,7 +516,7 @@ xdebug_break();
     protected static function getProviderConfig(string $className):?array
     {
         $configs = self::getProvidersJsonConfigAsArray();
-        if (is_null($configs)) return null;
+        if (!$configs) return null;
 
         $config = array_filter($configs, function($c) use ($className)
         {
@@ -609,8 +612,8 @@ xdebug_break();
             $field = $modules->get("InputfieldText");
             $field->label = ucfirst($conf['className']) . __(" Tenant ID");
             $field->description = __("Can be obtained [here]({$conf['helpUrl']}).");
-            $field->attr('name+id', strtolower($conf['className']) . '_tenantId');
-            $data_key = isset($data[strtolower($conf['className'] . "_tenantId")]) ? $data[strtolower($conf['className']) . "_tenantid"] : '';
+            $field->attr('name+id', strtolower($conf['className']) . '_tenantid');
+            $data_key = isset($data[strtolower($conf['className'] . "_tenantid")]) ? $data[strtolower($conf['className']) . "_tenantid"] : '';
             $field->attr('value', $data_key);
             $field->columnWidth = 50;
             $fs_set->append($field);
