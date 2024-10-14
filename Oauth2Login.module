@@ -24,13 +24,13 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
     {
         return [
             'title' => 'OAuth2Login',
-            'version' => "1.0.1",
+            'version' => "1.0.3",
             'summary' => 'OAuth2 login for ProcessWire.',
-            'author' => 'flydev',
+            'author' => 'flydev, Eero Jääskeläinen',
             'href' => 'https://modules.processwire.com/modules/oauth2-login/',
             'singular' => true,
             'autoload' => 'template=admin',
-            'icon' => 'plug'
+            'icon' => 'plug',
         ];
     }
 
@@ -45,12 +45,60 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         );
     }
 
+    
+    protected function addAdditionalUserFields():void
+    {
+        xdebug_break();
+
+        $userTemplate = $this->templates->get('user');
+        if ($userTemplate == null){
+            $this->warning($this->_('Could not get user template!'));
+            return;
+        }
+        // UID field:
+        if (!$userTemplate->hasField('oauth_uid'))
+        {
+            $field = $this->fields->get('oauth_uid');
+            if ($field == null){
+                $field = $this->fields->makeItem(['type'=>'Text','name'=>'oauth_uid','label'=>$this->_('UID (OAuth)')]);
+            }
+            $userTemplate->fields->add($field);
+        }
+
+    }
+    protected function removeAdditionalUserFields(bool $removeAddedUsers = false):void
+    {
+        $userTemplate = $this->templates->get('user');
+        if ($userTemplate == null){
+            $this->warning($this->_('Could not get user template!'));
+            return;
+        }
+        // UID field:
+        if (!$userTemplate->hasField('oauth_uid'))
+            return;
+        
+        if ($removeAddedUsers)
+        {
+            $usersToRem = $this->users->find('oauth_uid!=\'\'');
+            foreach ($usersToRem as $usr)
+            {
+                $this->users->delete($usr);
+            }
+        }
+
+    }
     public function ___install() {
 
         if(version_compare($this->config->version, self::minVersion, '<'))
             throw new WireException("This module requires ProcessWire " . self::minVersion . " or newer.");
 
         $this->save();
+        
+        $this->addAdditionalUserFields();
+    }
+
+    public function ___uninstall() {
+        $this->removeAdditionalUserFields(false);
     }
 
     public function __construct() {
@@ -68,7 +116,6 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         self::$_data = $this;
         //$this->config->styles->add($this->config->urls->Oauth2Login . 'Oauth2Login.css');
         //$this->config->scripts->add($this->config->urls->Oauth2Login . 'Oauth2Login.js');
-
 		$this->addHookAfter('Page(template.name=admin)::render', $this, 'hookBackend');
 
         $this->backendUrl = $this->config->urls->httpAdmin;
@@ -127,34 +174,53 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
 
         try {
             $ownerDetails = $this->provider->getResourceOwner($token);
+            $user = null;
+xdebug_break();
+            if (method_exists($ownerDetails,'getUpn') && ($upn = $ownerDetails->getUpn()))
+            {
+                if ($upnE = $this->sanitizer->email($upn)){
+                    $user = $this->users->get("email=$upn");
+                    if (! $user->id)
+                        $user = null;
+                }
+            }
+            if ($user == null)
+            {
+                if(method_exists($ownerDetails, 'getLastName') || method_exists($ownerDetails, 'getFirstName')) {
+                    $username = !empty($ownerDetails->getLastName()) ? $ownerDetails->getLastName() : '';
+                    $username = !empty($username) && !empty($ownerDetails->getFirstName()) ? $username . '-' : '';
+                    $username = !empty($ownerDetails->getFirstName()) ? $username . $ownerDetails->getFirstName() : $username;
+                }
+                elseif(method_exists($ownerDetails, 'getName')) {
+                    $ownerDetails = $this->provider->getResourceOwner($token);
+                    $username = $ownerDetails->getName();
+                }
 
-            if(method_exists($ownerDetails, 'getLastName') || method_exists($ownerDetails, 'getFirstName')) {
-                $username = !empty($ownerDetails->getLastName()) ? $ownerDetails->getLastName() : '';
-                $username = !empty($username) && !empty($ownerDetails->getFirstName()) ? $username . '-' : '';
-                $username = !empty($ownerDetails->getFirstName()) ? $username . $ownerDetails->getFirstName() : $username;
-            }
-            elseif(method_exists($ownerDetails, 'getName')) {
-                $ownerDetails = $this->provider->getResourceOwner($token);
-                $username = $ownerDetails->getName();
+                if (empty($username) && method_exists($ownerDetails, 'getNickname')) {
+                    $username = $ownerDetails->getNickname();
+                }
+
+                $emails = null;
+                if(method_exists($ownerDetails, 'getEmail')) {
+                    $emails = array($ownerDetails->getEmail());
+                }
+
+                elseif(method_exists($ownerDetails, 'getEmails')) {
+                    // need to fix that
+                    $this->provider->domain = 'https://github.com:emails';
+                    $ownerDetails = $this->provider->getResourceOwner($token);
+                    $emails = $ownerDetails->getEmails();
+                }
+                elseif(method_exists($ownerDetails,'getUpn'))
+                {
+                    $upn = $this->sanitizer->email($ownerDetails->getUpn());
+                    if (!empty($upn))
+                    $emails = array($upn);
+                }
+                $user = $this->checkUsername($username, $emails);
             }
 
-            if (empty($username) && method_exists($ownerDetails, 'getNickname')) {
-                $username = $ownerDetails->getNickname();
-            }
-
-            $emails = null;
-            if(method_exists($ownerDetails, 'getEmail')) {
-                $emails = array($ownerDetails->getEmail());
-            }
-
-            if(method_exists($ownerDetails, 'getEmails')) {
-                // need to fix that
-                $this->provider->domain = 'https://github.com:emails';
-                $ownerDetails = $this->provider->getResourceOwner($token);
-                $emails = $ownerDetails->getEmails();
-            }
             
-            $user = $this->checkUsername($username, $emails);
             if ($user == null)
                 $user = $this->registerNewUser($ownerDetails,$username,$emails);
 
@@ -230,6 +296,7 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         $form->prependMarkup = $options['prependMarkup'];
         $form->appendMarkup = $options['prependMarkup'];
         $out = '';
+
         foreach ($this->data as $key => $val) {
             if(strstr($key, 'provider_') && $val === 1) {
                 $provider = str_replace('provider_', '', $key);
@@ -251,6 +318,10 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             }
         }
 
+        if ($form->count() ===1){
+            $form->style = 'margin:0 auto; ';
+        }
+
         $out .= $form->render();
 
         return $out;
@@ -262,9 +333,9 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
      * @param array $emails User emails to compare
      * @return \ProcessWire\User|null User if found, null if not
      */
-    protected function checkUsername($username, array $emails):\ProcessWire\User {
+    protected function checkUsername($username, array $emails):?\ProcessWire\User {
         // disable DoS
-        if(count($emails) > 10) return false;
+        if(count($emails) > 10) return null;
 
         $username = wire('sanitizer')->pageName($username);
 
@@ -289,14 +360,14 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
 
         $provider = str_replace('provider_','',$providerName);
         
-
+        
         $config = self::getProviderConfig(str_replace('provider_','',$providerName));
         if ($config == null)
             throw new \ProcessWire\WireException(sprintf('Could not get config for provider %s',$providerName));
 
-        if (empty($config[$provider.'_registerifnotfound']))
+        if (! $this->get($provider.'_registerifnotfound'))
             return null;
-        $roleId = $config[$provider.'_registerrole'];
+        $roleId = $this->get($provider.'_registerrole');
         if (empty($roleId))
             throw new \ProcessWire\WireException(sprintf($this->_('No registration default role defined for provider %s. Ensure that valid role is set in configuration.'), lcfirst($provider)));
         $role = $this->roles->get(intval($roleId));
@@ -354,19 +425,26 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         $subclass = ucfirst(str_replace('provider_', '', $providerName));
         $providerOptions = self::getProviderConfig($subclass);
         $class = self::getProviderClassName($subclass,$providerOptions);
-        
         $subclass = strtolower($subclass);
         $varClientId = $subclass . '_clientid';
         $varSecret = $subclass . '_secret';
+        $tenantId = $this->data[$subclass .'_tenantid'];
 
         if(!isset($this->data[$varClientId]) || !isset($this->data[$varSecret]))
             return false;
-
+        
         $params = array(
             'clientId'      => $this->data[$varClientId],
             'clientSecret'  => $this->data[$varSecret],
             'redirectUri'   => $redirectUri
         );
+
+        if (!empty($tenantId))
+            $params['tenant'] = urlencode($tenantId);
+        /** @var \Accss\FieldtypeSecret $secretMod */
+        if ($secretMod = $this->modules->get('FieldtypeSecret'))
+            $params['clientSecret'] = $secretMod::decryptValueWithIV($params['clientSecret']);
+        
         $params = array_merge($params, $options);
         foreach ($this->data as $key => $value) {
             $r = strstr($key, 'provider_options_' . $subclass);
@@ -463,6 +541,17 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
         return isset($options['providerClassName']) ? $options['providerClassName']
             : '\League\OAuth2\Client\Provider\\' . ucfirst($provider);
     }
+
+    private static function getSecretField(){
+        $modules = wire('modules');
+        if ($modules->isInstalled('InputfieldSecret')){
+            $s = $modules->get('InputfieldSecret');
+            $s->handleInline = true;
+            return $s;
+        }
+
+        return $modules->get('InputfieldText');
+    }
     public static function getModuleConfigInputfields(array $data) {
 
         $data = array_merge(self::getDefaultData(), $data);
@@ -518,6 +607,15 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             $fs_set->showIf = "provider_" . strtolower($conf['className']) . "=1";
 
             $field = $modules->get("InputfieldText");
+            $field->label = ucfirst($conf['className']) . __(" Tenant ID");
+            $field->description = __("Can be obtained [here]({$conf['helpUrl']}).");
+            $field->attr('name+id', strtolower($conf['className']) . '_tenantId');
+            $data_key = isset($data[strtolower($conf['className'] . "_tenantId")]) ? $data[strtolower($conf['className']) . "_tenantid"] : '';
+            $field->attr('value', $data_key);
+            $field->columnWidth = 50;
+            $fs_set->append($field);
+
+            $field = $modules->get("InputfieldText");
             $field->label = ucfirst($conf['className']) . __(" ClientID");
             $field->description = __("Can be obtained [here]({$conf['helpUrl']}).");
             $field->attr('name+id', strtolower(strtolower($conf['className']) . '_clientid'));
@@ -526,12 +624,15 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             $field->columnWidth = 50;
             $fs_set->append($field);
 
-            $field = $modules->get("InputfieldText");
+            $field = self::getSecretField(); //$modules->get("InputfieldText");
             $field->label = __("Client Secret");
             $field->description = __("Client Secret for your website.");
             $field->attr('name+id', strtolower($conf['className'] . "_secret"));
             $data_key = isset($data[strtolower($conf['className']) . "_secret"]) ? $data[strtolower($conf['className']) . "_secret"] : '';
-            $field->attr('value', $data_key);
+            //if (get_class($field) == 'Accss\\InputfieldSecret')
+            //    $field->setSecret($data_key);
+            //else
+                $field->attr('value', $data_key);
             $field->columnWidth = 50;
             $fs_set->append($field);
 
@@ -546,20 +647,24 @@ class Oauth2Login extends WireData implements Module, ConfigurableModule {
             $fs->append($fs_set);
 
             $f = $modules->get('InputfieldCheckbox');
+            $iVal = strtolower($conf['className'] .'_registerIfNotFound');
             $f->label = __('Register user if not found?');
             $f->description = __('If enabled, site will register not found users. Use this with caution because you may allow undefined users to administer your site!');
-            $f->attr('name+id',strtolower($conf['className'] .'_registerIfNotFound'));
+            $f->attr('name+id',$iVal);
+            $f->checked = !empty($data[$iVal]);
             $fs_set->append($f);
 
             $f = $modules->get('InputfieldSelect');
+            $iVal = strtolower($conf['className'] .'_registerRole');
             $f->label = __('Role to register user on');
             $f->showIf = sprintf('%s=1',strtolower($conf['className'] .'_registerIfNotFound'));
             $f->required = true;//If = sprintf('%s=1',strtolower($conf['className'] .'_registerIfNotFound'));
-            $f->attr('name+id',strtolower($conf['className'] .'_registerRole'));
+            $f->attr('name+id',$iVal);
             foreach (wire('roles') as $role)
             {
                 $f->addOption($role->id,$role->name);
             }
+            $f->value = !empty($data[$iVal])? $data[$iVal]:'';
             $fs_set->append($f);
 
 
